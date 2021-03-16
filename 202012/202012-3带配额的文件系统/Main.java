@@ -13,6 +13,7 @@ public class Main {
         boolean isDirectory = false;
         long LD = 0;//目录配额
         long LR = 0;//后代配额
+        boolean valid = true;//是否有效，用于创建文件时临时创建目录
 
         //文件
         public MyFile(String fileName, long fileSize) {
@@ -31,17 +32,29 @@ public class Main {
             if (index == filePath.length - 2) {
                 return this;
             } else {
+                String fileName = filePath[++index];
                 //验证是否有重名
-                MyFile file = map.get(filePath[++index]);
+                MyFile file = map.get(fileName);
                 if (file != null && !file.isDirectory) {//若要创建的目录文件与已有的同一双亲目录下的孩子文件中的普通文件名称重复，则该指令不能执行成功。
                     return null;
                 }
                 if (file == null) { //当路径中的任何目录不存在时，应当尝试创建这些目录；
-                    file = new MyFile(filePath[index]);
-                    map.put(filePath[index], file);
+                    file = new MyFile(fileName);
+                    file.valid = false;//临时创建
+                    map.put(fileName, file);
                 }
                 list.add(this);
                 return file.findParent(filePath, index, list);
+            }
+        }
+
+        private void clearInvalidFile(MyFile parent, List<MyFile> list) {
+            MyFile pre = parent;
+            for (int i = list.size() - 1; i >= 0; i--) {
+                if (pre != null && !pre.valid) {
+                    list.get(i).map.remove(pre.fileName);
+                }
+                pre = list.get(i);
             }
         }
 
@@ -53,10 +66,12 @@ public class Main {
             MyFile parent = findParent(filePath, index, list);
 
             if (parent == null) {
+                clearInvalidFile(parent, list);
                 return false;
             }
             MyFile file = parent.map.get(fileName);
             if (file != null && file.isDirectory) {//若路径所指文件已经存在，但是目录文件的，则该指令不能执行成功。
+                clearInvalidFile(parent, list);
                 return false;
             }
             long changeSize = 0;
@@ -68,14 +83,23 @@ public class Main {
             }
             //在list中做一遍配额校验
             if (changeSize > 0) {//父目录检查 目录配额 和后代配额
+
+                boolean canCreate = true;
                 if ((parent.LD != 0 && parent.lDSize + changeSize > parent.LD) ||
                         (parent.LR != 0 && parent.lRSize + changeSize > parent.LR)) {
-                    return false;
+                    canCreate = false;
                 }
-                for (MyFile pp : list) {
-                    if (pp.LR != 0 && pp.lRSize + changeSize > pp.LR) {
-                        return false;
+                if (canCreate) {
+                    for (MyFile pp : list) {
+                        if (pp.LR != 0 && pp.lRSize + changeSize > pp.LR) {
+                            canCreate = false;
+                            break;
+                        }
                     }
+                }
+                if (!canCreate) {//回滚临时创建的目录
+                    clearInvalidFile(parent, list);
+                    return false;
                 }
             }
             //都合适才能进行文件更新然后再次循环进行配额更新
@@ -86,9 +110,11 @@ public class Main {
                 parent.lDSize += changeSize;
                 parent.size += changeSize;
                 parent.lRSize += changeSize;
+                parent.valid = true;
                 for (MyFile pp : list) {//祖辈目录不要更新LD
                     pp.size += changeSize;
                     pp.lRSize += changeSize;
+                    pp.valid = true;
                 }
             }
             return true;
@@ -149,6 +175,7 @@ public class Main {
             }
             return file.quote(filePath, index, LD, LR);
         }
+
     }
 
     public static void main(String[] args) {
@@ -164,7 +191,7 @@ public class Main {
             switch (op) {
                 case 'C': //创建
                     //需要创建的普通文件的路径和文件的大小。
-                    int fileSize = in.nextInt();
+                    long fileSize = in.nextLong();
                     result = root.create(path, 0, path[path.length - 1], fileSize);
                     break;
                 case 'R': //移除
@@ -174,7 +201,7 @@ public class Main {
                     result = true;
                     break;
                 case 'Q': //设置配额
-                    //设置配额值的指令有三个参数，是空格分隔的字符串和两个非负整数，分别表示需要设置配额值的目录的路径、目录配额和后代配额。
+                    //设置配额值的指令有三个参数，是空格分隔的字符串和两个非负整数，分别表示需要设置配额值的目录的路径、目录配额和后代配额。  操作会被拒绝：试图设定少于目前已有文件占用空间的配额值，或者试图创建超过配额值的文件。
                     long LD = in.nextLong();
                     long LR = in.nextLong();
                     result = root.quote(path, 0, LD, LR);
@@ -184,4 +211,3 @@ public class Main {
         }
     }
 }
-
